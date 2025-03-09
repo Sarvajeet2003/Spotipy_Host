@@ -38,9 +38,16 @@ emotion_genres = {
 }
 
 played_songs = {emotion: set() for emotion in emotion_genres.keys()}
-model = load_model("Model.h5")  # Ensure Model.h5 exists in your project
-emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+try:
+    model = load_model("Model.h5")  # Ensure Model.h5 exists in your project
+    emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+except Exception as e:
+    print(f"Error loading model: {e}")
+    # Create a dummy model for testing deployment
+    model = None
+    emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
+    face_cascade = None
 
 # Shared variables with thread safety
 emotion_summary = []
@@ -148,54 +155,61 @@ def index():
 @app.route('/process_frame', methods=['POST'])
 def process_frame():
     global next_emotion_to_play
+    
+    # Check if model is loaded
+    if model is None:
+        return jsonify({
+            'error': 'Model not loaded',
+            'dominant_emotion': 'Happy',  # Default emotion
+            'emotion_counts': {e: 1 for e in emotion_labels}
+        })
+    
+    # Decode frame from client
+    frame_data = request.json['frame'].split(',')[1]
+    nparr = np.frombuffer(base64.b64decode(frame_data), np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-    try:
-        # Decode frame from client
-        frame_data = request.json['frame'].split(',')[1]
-        nparr = np.frombuffer(base64.b64decode(frame_data), np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-        with pause_lock:
-            if paused:
-                return jsonify({
-                    'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
-                    'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
-                })
-
-        # Process frame for emotion detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
-
-        if len(faces) == 0:
+    with pause_lock:
+        if paused:
             return jsonify({
                 'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
                 'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
             })
 
-        detected_emotions = []
-        for (x, y, w, h) in faces:
-            face = frame[y:y+h, x:x+w]
-            # Convert BGR to RGB (OpenCV uses BGR by default)
-            face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+    # Process frame for emotion detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
 
-            # Resize and normalize
-            resized_face = cv2.resize(face_rgb, (48, 48)) / 255.0
+    if len(faces) == 0:
+        return jsonify({
+            'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
+            'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
+        })
 
-            # Reshape for model input (1, 48, 48, 3)
-            reshaped_face = resized_face.reshape(1, 48, 48, 3)
-            
-            preds = model.predict(reshaped_face)
-            emotion = emotion_labels[preds.argmax()] if preds.max() >= 0.6 else "Uncertain"
-            detected_emotions.append(emotion)
+    detected_emotions = []
+    for (x, y, w, h) in faces:
+        face = frame[y:y+h, x:x+w]
+        # Convert BGR to RGB (OpenCV uses BGR by default)
+        face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+
+        # Resize and normalize
+        resized_face = cv2.resize(face_rgb, (48, 48)) / 255.0
+
+        # Reshape for model input (1, 48, 48, 3)
+        reshaped_face = resized_face.reshape(1, 48, 48, 3)
         
-        # Only process valid emotions (those in our mapping)
-        valid_emotions = [e for e in detected_emotions if e in emotion_genres]
-        
-        if valid_emotions:
-            with pause_lock:
-                for emotion in valid_emotions:
-                    emotion_summary.append(emotion)
-                    emotion_window.append(emotion)
+        preds = model.predict(reshaped_face)
+        emotion = emotion_labels[preds.argmax()] if preds.max() >= 0.6 else "Uncertain"
+        detected_emotions.append(emotion)
+    
+    # Only process valid emotions (those in our mapping)
+    valid_emotions = [e for e in detected_emotions if e in emotion_genres]
+    
+    if valid_emotions:
+        with pause_lock:
+            for emotion in valid_emotions:
+                emotion_summary.append(emotion)
+                emotion_window.append(emotion)
                 
                 # Get current dominant emotion
                 emotions_list = list(emotion_window)
@@ -218,12 +232,12 @@ def process_frame():
                             next_emotion_to_play = current_dominant
                             print(f"Emotion changed to {current_dominant}, will play after current song ends")
 
-        dominant_emotion = max(set(emotion_window), key=emotion_window.count) if emotion_window else "Uncertain"
-        
-        return jsonify({
-            'dominant_emotion': dominant_emotion,
-            'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
-        })
+    dominant_emotion = max(set(emotion_window), key=emotion_window.count) if emotion_window else "Uncertain"
+    
+    return jsonify({
+        'dominant_emotion': dominant_emotion,
+        'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
+    })
     except Exception as e:
         print(f"Error processing frame: {e}")
         return jsonify({'error': str(e)})
