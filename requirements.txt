@@ -5,5 +5,5 @@ tensorflow==2.12.0
 keras==2.12.0
 spotipy==2.22.1
 gunicorn==20.1.0
-spotipy==2.23.0
 requests==2.31.0  # Implicit dependency for HTTP requests
+Werkzeug==2.0.1
