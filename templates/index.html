@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Emotion Music Player</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <div class="video-section">
+            <div class="video-wrapper">
+                <!-- Client-side webcam element -->
+                <video id="webcam" autoplay playsinline></video>
+                <canvas id="capture-canvas" style="display:none;"></canvas>
+                
+                <!-- Control buttons and emotion display -->
+                <div class="control-buttons">
+                    <button id="pause-btn" class="btn">Pause</button>
+                </div>
+                <div class="emotion-badge" id="dominant-emotion-badge">-</div>
+            </div>
+        </div>
+
+        <div class="control-panel">
+            <!-- Emotion statistics section -->
+            <div class="emotion-stats">
+                <h3>Emotion Analysis</h3>
+                <div class="stats-grid" id="emotion-counts"></div>
+            </div>
+
+            <!-- Music player section -->
+            <div class="now-playing">
+                <h3>Now Playing</h3>
+                <div class="track-card">
+                    <img src="" alt="Album Art" class="album-art" id="album-art">
+                    <div class="track-details">
+                        <div class="track-name" id="track-name">No track playing</div>
+                        <div class="time-display">
+                            <span id="current-time">0:00</span>/<span id="total-time">0:00</span>
+                        </div>
+                        <div class="progress-container" id="progress-container">
+                            <div class="progress-bar" id="progress-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Helper functions for emotion display
+        function getEmotionColor(emotion) {
+            const colors = {
+                'Angry': '#ff5252',
+                'Fear': '#d500f9',
+                'Happy': '#ffeb3b',
+                'Sad': '#03a9f4',
+                'Surprise': '#ff4081',
+                'Neutral': '#9e9e9e',
+                'Disgust': '#8bc34a'
+            };
+            return colors[emotion] || '#9e9e9e';
+        }
+
+        function getEmotionEmoji(emotion) {
+            const emojis = {
+                'Angry': '😠',
+                'Fear': '😨',
+                'Happy': '😊',
+                'Sad': '😢',
+                'Surprise': '😲',
+                'Neutral': '😐',
+                'Disgust': '🤢'
+            };
+            return emojis[emotion] || '❓';
+        }
+
+        // Client-side webcam setup
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                document.getElementById('webcam').srcObject = stream;
+            })
+            .catch(err => console.error("Webcam access denied:", err));
+
+        // Frame processing loop
+        setInterval(() => {
+            const video = document.getElementById('webcam');
+            const canvas = document.getElementById('capture-canvas');
+            
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                
+                fetch('/process_frame', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ frame: canvas.toDataURL('image/jpeg') })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Update emotion display
+                    document.getElementById('dominant-emotion-badge').textContent = data.dominant_emotion;
+                    document.getElementById('dominant-emotion-badge').style.backgroundColor = getEmotionColor(data.dominant_emotion);
+                    
+                    // Update emotion counts
+                    const countsContainer = document.getElementById('emotion-counts');
+                    countsContainer.innerHTML = Object.entries(data.emotion_counts)
+                        .filter(([k, v]) => v > 0)
+                        .map(([k, v]) => `
+                            <div class="stat-item ${k.toLowerCase()}">
+                                <span class="emoji">${getEmotionEmoji(k)}</span>
+                                <div class="stat-info">
+                                    <div class="emotion-label">${k}</div>
+                                    <div class="count">${v}</div>
+                                </div>
+                            </div>
+                        `).join('');
+                })
+                .catch(err => console.error("Error processing frame:", err));
+            }
+        }, 500); // Reduced frequency to 500ms to avoid overwhelming the server
+
+        // Music playback controls
+        document.querySelector('.progress-container').addEventListener('click', (e) => {
+            fetch('/playback_state')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.is_playing) {
+                        const width = e.currentTarget.offsetWidth;
+                        const clickX = e.offsetX;
+                        const position = (clickX / width) * data.duration_ms;
+                        
+                        fetch('/seek_position', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ position_ms: Math.floor(position) })
+                        });
+                    }
+                })
+                .catch(err => console.error("Error seeking track:", err));
+        });
+
+        // Track updates and progress
+        function updatePlayback() {
+            fetch('/playback_state')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.is_playing) {
+                        document.getElementById('progress-bar').style.width = `${(data.progress_ms / data.duration_ms) * 100}%`;
+                        document.getElementById('current-time').textContent = formatTime(data.progress_ms);
+                        document.getElementById('total-time').textContent = formatTime(data.duration_ms);
+                    }
+                })
+                .catch(err => console.error("Error updating playback:", err));
+        }
+
+        // Pause functionality
+        document.getElementById('pause-btn').addEventListener('click', () => {
+            fetch('/toggle_pause', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('pause-btn').textContent = data.paused ? 'Resume' : 'Pause';
+                })
+                .catch(err => console.error("Error toggling pause:", err));
+        });
+
+        // Helper functions
+        function formatTime(ms) {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = ((ms % 60000) / 1000).toFixed(0);
+            return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+
+        // Periodic updates
+        setInterval(updatePlayback, 1000);
+        
+        // Update track info
+        setInterval(() => {
+            fetch('/current_track')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('track-name').textContent = data.track_name || 'No track playing';
+                    document.getElementById('album-art').src = data.album_art || '';
+                })
+                .catch(err => console.error("Error updating track info:", err));
+        }, 2000);
+    </script>
+</body>
+</html>
