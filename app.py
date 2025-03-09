@@ -50,7 +50,14 @@ emotion_genres = {
 
 played_songs = {emotion: set() for emotion in emotion_genres.keys()}
 try:
-    model = load_model("Model.h5")  # Ensure Model.h5 exists in your project
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Model.h5")
+    print(f"Attempting to load model from: {model_path}")
+    if os.path.exists(model_path):
+        model = load_model(model_path)
+        print("Model loaded successfully!")
+    else:
+        print(f"Model file not found at {model_path}")
+        model = None
     emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 except Exception as e:
@@ -310,7 +317,13 @@ def system_status():
         'face_cascade_loaded': face_cascade is not None,
         'emotion_window_size': len(emotion_window),
         'current_song_uri': current_song_uri,
-        'next_emotion': next_emotion_to_play
+        'next_emotion': next_emotion_to_play,
+        'environment': {
+            'working_directory': os.getcwd(),
+            'files_in_directory': os.listdir(),
+            'model_path_exists': os.path.exists("Model.h5"),
+            'absolute_model_path': os.path.abspath("Model.h5") if os.path.exists("Model.h5") else "Not found"
+        }
     }
     
     # Try to get Spotify devices if connected
