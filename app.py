@@ -187,58 +187,58 @@ def process_frame():
                 'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
             })
 
-    detected_emotions = []
-    for (x, y, w, h) in faces:
-        face = frame[y:y+h, x:x+w]
-        # Convert BGR to RGB (OpenCV uses BGR by default)
-        face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+        detected_emotions = []
+        for (x, y, w, h) in faces:
+            face = frame[y:y+h, x:x+w]
+            # Convert BGR to RGB (OpenCV uses BGR by default)
+            face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
 
-        # Resize and normalize
-        resized_face = cv2.resize(face_rgb, (48, 48)) / 255.0
+            # Resize and normalize
+            resized_face = cv2.resize(face_rgb, (48, 48)) / 255.0
 
-        # Reshape for model input (1, 48, 48, 3)
-        reshaped_face = resized_face.reshape(1, 48, 48, 3)
+            # Reshape for model input (1, 48, 48, 3)
+            reshaped_face = resized_face.reshape(1, 48, 48, 3)
+            
+            preds = model.predict(reshaped_face)
+            emotion = emotion_labels[preds.argmax()] if preds.max() >= 0.6 else "Uncertain"
+            detected_emotions.append(emotion)
         
-        preds = model.predict(reshaped_face)
-        emotion = emotion_labels[preds.argmax()] if preds.max() >= 0.6 else "Uncertain"
-        detected_emotions.append(emotion)
-    
-    # Only process valid emotions (those in our mapping)
-    valid_emotions = [e for e in detected_emotions if e in emotion_genres]
-    
-    if valid_emotions:
-        with pause_lock:
-            for emotion in valid_emotions:
-                emotion_summary.append(emotion)
-                emotion_window.append(emotion)
-                
-                # Get current dominant emotion
-                emotions_list = list(emotion_window)
-                emotion_counts = {}
-                for e in emotions_list:
-                    if e in emotion_genres:
-                        emotion_counts[e] = emotion_counts.get(e, 0) + 1
-                
-                if emotion_counts:
-                    current_dominant = max(emotion_counts, key=emotion_counts.get)
+        # Only process valid emotions (those in our mapping)
+        valid_emotions = [e for e in detected_emotions if e in emotion_genres]
+        
+        if valid_emotions:
+            with pause_lock:
+                for emotion in valid_emotions:
+                    emotion_summary.append(emotion)
+                    emotion_window.append(emotion)
                     
-                    # Check if dominant emotion has changed significantly
-                    if len(emotion_window) >= 10:
-                        dominant_count = emotion_counts.get(current_dominant, 0)
-                        total_valid = sum(emotion_counts.values())
+                    # Get current dominant emotion
+                    emotions_list = list(emotion_window)
+                    emotion_counts = {}
+                    for e in emotions_list:
+                        if e in emotion_genres:
+                            emotion_counts[e] = emotion_counts.get(e, 0) + 1
+                    
+                    if emotion_counts:
+                        current_dominant = max(emotion_counts, key=emotion_counts.get)
                         
-                        # If dominant emotion represents at least 60% of recent emotions,
-                        # queue it up for the next song change
-                        if dominant_count / total_valid >= 0.6:
-                            next_emotion_to_play = current_dominant
-                            print(f"Emotion changed to {current_dominant}, will play after current song ends")
+                        # Check if dominant emotion has changed significantly
+                        if len(emotion_window) >= 10:
+                            dominant_count = emotion_counts.get(current_dominant, 0)
+                            total_valid = sum(emotion_counts.values())
+                            
+                            # If dominant emotion represents at least 60% of recent emotions,
+                            # queue it up for the next song change
+                            if dominant_count / total_valid >= 0.6:
+                                next_emotion_to_play = current_dominant
+                                print(f"Emotion changed to {current_dominant}, will play after current song ends")
 
-    dominant_emotion = max(set(emotion_window), key=emotion_window.count) if emotion_window else "Uncertain"
-    
-    return jsonify({
-        'dominant_emotion': dominant_emotion,
-        'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
-    })
+        dominant_emotion = max(set(emotion_window), key=emotion_window.count) if emotion_window else "Uncertain"
+        
+        return jsonify({
+            'dominant_emotion': dominant_emotion,
+            'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
+        })
     except Exception as e:
         print(f"Error processing frame: {e}")
         return jsonify({'error': str(e)})
