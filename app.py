@@ -17,14 +17,25 @@ app = Flask(__name__)
 # Spotify configuration with environment variables
 SPOTIFY_CLIENT_ID = os.environ.get('SPOTIFY_CLIENT_ID', '5570b7ff4a454259b4b8ac9ca0ef90f9')
 SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '297b1a50c4db45a287ba5bcdc0f684af')
-SPOTIFY_REDIRECT_URI = os.environ.get('SPOTIFY_REDIRECT_URI', 'http://localhost:8888/callback/')
+SPOTIFY_REDIRECT_URI = os.environ.get('SPOTIFY_REDIRECT_URI', 'https://spotipy-host.onrender.com/callback/')
 
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET,
-    redirect_uri=SPOTIFY_REDIRECT_URI,
-    scope="user-modify-playback-state user-read-playback-state"
-))
+# Initialize Spotify client with cache handling for deployment
+cache_path = os.environ.get('SPOTIFY_CACHE_PATH', '.cache')
+sp = None
+
+try:
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
+        scope="user-modify-playback-state user-read-playback-state",
+        cache_path=cache_path,
+        open_browser=False  # Important for headless environments
+    ))
+    print("Spotify client initialized successfully")
+except Exception as e:
+    print(f"Error initializing Spotify client: {e}")
+    sp = None
 
 # Emotion configuration
 emotion_genres = {
@@ -65,13 +76,20 @@ def song_change_thread():
     global current_song_start_time, current_song_duration_ms, current_song_uri, next_emotion_to_play
     while True:
         try:
+            if sp is None:
+                print("Spotify client not initialized, skipping song change check")
+                time.sleep(5)
+                continue
+                
             with pause_lock:
                 if not paused:
                     # Check if 1 minute has passed since the last song change
                     elapsed = time.time() - current_song_start_time
                     if elapsed >= song_duration:
+                        print(f"Song duration elapsed ({elapsed:.2f}s), checking for next song")
                         # If we have a next emotion queued up, play it
                         if next_emotion_to_play and next_emotion_to_play in emotion_genres:
+                            print(f"Playing song for queued emotion: {next_emotion_to_play}")
                             play_song_for_emotion(next_emotion_to_play)
                             next_emotion_to_play = None
                         # Otherwise, check if we should play based on current emotion
@@ -85,6 +103,7 @@ def song_change_thread():
                             
                             if emotion_counts:
                                 dominant = max(emotion_counts, key=emotion_counts.get)
+                                print(f"Playing song for dominant emotion: {dominant}")
                                 play_song_for_emotion(dominant)
                     else:
                         # Update current song information if needed
@@ -158,6 +177,7 @@ def process_frame():
     
     # Check if model is loaded
     if model is None:
+        print("Model not loaded, returning default emotion")
         return jsonify({
             'error': 'Model not loaded',
             'dominant_emotion': 'Happy',  # Default emotion
@@ -169,6 +189,8 @@ def process_frame():
         frame_data = request.json['frame'].split(',')[1]
         nparr = np.frombuffer(base64.b64decode(frame_data), np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        print(f"Frame shape: {frame.shape}")  # Debug frame dimensions
 
         with pause_lock:
             if paused:
@@ -180,6 +202,8 @@ def process_frame():
         # Process frame for emotion detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+        
+        print(f"Detected {len(faces)} faces")  # Debug face detection
 
         if len(faces) == 0:
             return jsonify({
@@ -276,6 +300,29 @@ def playback_state():
     except Exception as e:
         print(f"Error getting playback state: {e}")
     return jsonify({'progress_ms': 0, 'duration_ms': 0, 'is_playing': False})
+
+@app.route('/system_status')
+def system_status():
+    """Check the status of various system components"""
+    status = {
+        'model_loaded': model is not None,
+        'spotify_connected': sp is not None,
+        'face_cascade_loaded': face_cascade is not None,
+        'emotion_window_size': len(emotion_window),
+        'current_song_uri': current_song_uri,
+        'next_emotion': next_emotion_to_play
+    }
+    
+    # Try to get Spotify devices if connected
+    if sp:
+        try:
+            devices = sp.devices()
+            status['spotify_devices'] = len(devices['devices'])
+            status['active_devices'] = [d['name'] for d in devices['devices'] if d['is_active']]
+        except Exception as e:
+            status['spotify_error'] = str(e)
+    
+    return jsonify(status)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
