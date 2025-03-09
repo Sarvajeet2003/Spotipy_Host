@@ -164,27 +164,28 @@ def process_frame():
             'emotion_counts': {e: 1 for e in emotion_labels}
         })
     
-    # Decode frame from client
-    frame_data = request.json['frame'].split(',')[1]
-    nparr = np.frombuffer(base64.b64decode(frame_data), np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    try:
+        # Decode frame from client
+        frame_data = request.json['frame'].split(',')[1]
+        nparr = np.frombuffer(base64.b64decode(frame_data), np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-    with pause_lock:
-        if paused:
+        with pause_lock:
+            if paused:
+                return jsonify({
+                    'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
+                    'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
+                })
+
+        # Process frame for emotion detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+
+        if len(faces) == 0:
             return jsonify({
                 'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
                 'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
             })
-
-    # Process frame for emotion detection
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
-
-    if len(faces) == 0:
-        return jsonify({
-            'dominant_emotion': max(set(emotion_window), key=emotion_window.count) if emotion_window else "No Face",
-            'emotion_counts': {e: emotion_summary.count(e) for e in emotion_labels if e in emotion_summary}
-        })
 
     detected_emotions = []
     for (x, y, w, h) in faces:
