@@ -50,16 +50,41 @@ emotion_genres = {
 
 played_songs = {emotion: set() for emotion in emotion_genres.keys()}
 try:
-    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Model.h5")
-    print(f"Attempting to load model from: {model_path}")
-    if os.path.exists(model_path):
-        model = load_model(model_path)
-        print("Model loaded successfully!")
-    else:
-        print(f"Model file not found at {model_path}")
+    # In the model loading section
+    try:
+        # Try multiple possible locations for the model file
+        possible_paths = [
+            "Model.h5",  # Current directory
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "Model.h5"),  # Absolute path
+            "/opt/render/project/src/Model.h5",  # Render's default project directory
+            "../Model.h5",  # Parent directory
+        ]
+        
         model = None
-    emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        for path in possible_paths:
+            print(f"Trying to load model from: {path}")
+            if os.path.exists(path):
+                print(f"Found model at: {path}")
+                try:
+                    model = load_model(path)
+                    print(f"Successfully loaded model from: {path}")
+                    break
+                except Exception as e:
+                    print(f"Error loading model from {path}: {e}")
+            else:
+                print(f"Model not found at: {path}")
+        
+        if model is None:
+            print("Could not find or load model from any location")
+            
+        emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    except Exception as e:
+        print(f"Error in model loading section: {e}")
+        # Create a dummy model for testing deployment
+        model = None
+        emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral', 'Fear', 'Disgust']
+        face_cascade = None
 except Exception as e:
     print(f"Error loading model: {e}")
     # Create a dummy model for testing deployment
@@ -311,6 +336,11 @@ def playback_state():
 @app.route('/system_status')
 def system_status():
     """Check the status of various system components"""
+    # Get list of files in various directories
+    current_dir_files = os.listdir()
+    parent_dir_files = os.listdir('..') if os.path.exists('..') else []
+    render_dir_files = os.listdir('/opt/render/project/src') if os.path.exists('/opt/render/project/src') else []
+    
     status = {
         'model_loaded': model is not None,
         'spotify_connected': sp is not None,
@@ -320,9 +350,17 @@ def system_status():
         'next_emotion': next_emotion_to_play,
         'environment': {
             'working_directory': os.getcwd(),
-            'files_in_directory': os.listdir(),
-            'model_path_exists': os.path.exists("Model.h5"),
-            'absolute_model_path': os.path.abspath("Model.h5") if os.path.exists("Model.h5") else "Not found"
+            'files_in_current_dir': current_dir_files,
+            'files_in_parent_dir': parent_dir_files,
+            'files_in_render_dir': render_dir_files,
+            'model_paths_checked': [
+                {"path": "Model.h5", "exists": os.path.exists("Model.h5")},
+                {"path": os.path.join(os.path.dirname(os.path.abspath(__file__)), "Model.h5"), 
+                 "exists": os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "Model.h5"))},
+                {"path": "/opt/render/project/src/Model.h5", 
+                 "exists": os.path.exists("/opt/render/project/src/Model.h5")},
+                {"path": "../Model.h5", "exists": os.path.exists("../Model.h5")}
+            ]
         }
     }
     
